@@ -1191,9 +1191,10 @@ createButton(tabPanels[3], "🌀 VOID 🌀", function()
     else
         task.spawn(function()
             for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= player and p.Character and not isSafePlayer(p) then
+                if p ~= player and not isSafePlayer(p) then
+                    if not p.Character then p.CharacterAdded:Wait() end 
                     performVoid(p)
-                    task.wait(0.05) -- 0.05s is the absolute minimum so the server doesn't drop the remote
+                    task.wait(0.15) 
                 end
             end
         end)
@@ -1213,9 +1214,10 @@ createButton(tabPanels[3], " BRING ", function()
     else
         task.spawn(function()
             for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= player and p.Character and not isSafePlayer(p) then
+                if p ~= player and not isSafePlayer(p) then
+                    if not p.Character then p.CharacterAdded:Wait() end 
                     performAutoBring(p)
-                    task.wait(0.05) -- 0.05s is the absolute minimum so the server doesn't drop the remote
+                    task.wait(0.15)
                 end
             end
         end)
