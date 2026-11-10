@@ -183,7 +183,7 @@ local function ResetAllHitboxes()
 end
 
 -- ============================================
--- VOID & BRING LOGIC (UPDATED FOR ONE BY ONE)
+-- VOID & BRING LOGIC
 -- ============================================
 local function _startInstaReturn(savedCFrame, duration)
     local startTime = tick()
@@ -1182,7 +1182,6 @@ createButton(tabPanels[3], "🌀 VOID 🌀", function()
     local txt = CONFIG.BringTargetName:lower()
     
     if txt ~= "" then
-        -- Void specific person
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= player and (p.Name:lower():find(txt, 1, true) or p.DisplayName:lower():find(txt, 1, true)) then
                 performVoid(p)
@@ -1190,12 +1189,11 @@ createButton(tabPanels[3], "🌀 VOID 🌀", function()
             end
         end
     else
-        -- Void everyone one by one
         task.spawn(function()
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= player and p.Character and not isSafePlayer(p) then
                     performVoid(p)
-                    task.wait(1.2) -- Delay so it does one at a time
+                    task.wait(0.05) -- 0.05s is the absolute minimum so the server doesn't drop the remote
                 end
             end
         end)
@@ -1206,7 +1204,6 @@ createButton(tabPanels[3], " BRING ", function()
     local txt = CONFIG.BringTargetName:lower()
     
     if txt ~= "" then
-        -- Bring specific person
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= player and (p.Name:lower():find(txt, 1, true) or p.DisplayName:lower():find(txt, 1, true)) then
                 performAutoBring(p)
@@ -1214,12 +1211,11 @@ createButton(tabPanels[3], " BRING ", function()
             end
         end
     else
-        -- Bring everyone one by one
         task.spawn(function()
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= player and p.Character and not isSafePlayer(p) then
                     performAutoBring(p)
-                    task.wait(1.2) -- Delay so it does one at a time
+                    task.wait(0.05) -- 0.05s is the absolute minimum so the server doesn't drop the remote
                 end
             end
         end)
