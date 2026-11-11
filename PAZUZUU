@@ -189,8 +189,12 @@ local function ResetAllHitboxes()
 end
 
 -- ============================================
--- VOID & BRING LOGIC
+-- VOID & BRING LOGIC (SEQUENTIAL — one at a time)
 -- ============================================
+local VOID_STEP_DELAY  = 0.28
+local BRING_STEP_DELAY = 0.22
+local _queueRunning    = false
+
 local function _startInstaReturn(savedCFrame, duration)
     local startTime = tick()
     local conn
@@ -207,96 +211,138 @@ local function _startInstaReturn(savedCFrame, duration)
             end)
         end
     end)
+    return conn
 end
 
-local function performVoid(targetPlayer)
-    task.spawn(function()
-        if not targetPlayer or not targetPlayer.Character then return end
-        local mySavedCFrame = nil
-        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            mySavedCFrame = player.Character.HumanoidRootPart.CFrame
+-- Single void of ONE target — yields until fully done
+local function performVoidOne(targetPlayer)
+    if not targetPlayer or not targetPlayer.Character then return end
+    local hrp0 = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp0 then return end
+    local mySavedCFrame = hrp0.CFrame
+
+    pcall(function()
+        if CarryRequest then
+            CarryRequest:FireServer(table.unpack({
+                [1] = targetPlayer, [2] = CONFIG.InstaGymLength, [3] = CONFIG.InstaGymHeight, [4] = CONFIG.InstaGymDistance, [5] = 0, [6] = 0, [7] = 0,
+            }))
         end
+    end)
+    task.wait(0.08)
+    pcall(function() if EventTeleportEvent then EventTeleportEvent:FireServer() end end)
+    task.wait(0.08)
+    pcall(function() if StopCarry then StopCarry:FireServer() end end)
 
+    local h = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if h then
         pcall(function()
-            if CarryRequest then
-                CarryRequest:FireServer(table.unpack({
-                    [1] = targetPlayer, [2] = CONFIG.InstaGymLength, [3] = CONFIG.InstaGymHeight, [4] = CONFIG.InstaGymDistance, [5] = 0, [6] = 0, [7] = 0,
-                }))
-            end
+            h.CFrame = mySavedCFrame
+            h.AssemblyLinearVelocity = Vector3.new(0, -1, 0)
         end)
-        task.wait(0.12)
-        pcall(function() if EventTeleportEvent then EventTeleportEvent:FireServer() end end)
-        task.wait(0.08)
-        pcall(function() if StopCarry then StopCarry:FireServer() end end)
+    end
+    local conn = _startInstaReturn(mySavedCFrame, 0.15)
 
-        if mySavedCFrame then
+    local waited = 0
+    while waited < 0.25 do
+        task.wait(0.03)
+        waited = waited + 0.03
+        local char = targetPlayer and targetPlayer.Character
+        local th = char and char:FindFirstChild("HumanoidRootPart")
+        if not th then break end
+        if th.Position.Y < -100 or (th.Position - mySavedCFrame.Position).Magnitude > 500 then break end
+    end
+    if conn then conn:Disconnect() end
+end
+
+-- Single bring of ONE target — yields until fully done
+local function performBringOne(targetPlayer, customDestPos)
+    if not targetPlayer or not targetPlayer.Character then return end
+    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local destPos = customDestPos or hrp.Position
+    local mySpot = hrp.CFrame
+    local argX = EVENT_X - destPos.X
+    local argY = EVENT_Y - destPos.Y
+    local argZ = EVENT_Z - destPos.Z
+
+    pcall(function()
+        if CarryRequest then
+            CarryRequest:FireServer(table.unpack({
+                [1] = targetPlayer, [2] = argX, [3] = argY, [4] = argZ, [5] = 0, [6] = 0, [7] = 0,
+            }))
+        end
+    end)
+    task.wait(0.05)
+    pcall(function() if EventTeleportEvent then EventTeleportEvent:FireServer() end end)
+    task.wait(0.05)
+    pcall(function() if StopCarry then StopCarry:FireServer() end end)
+
+    local startTime = tick()
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        if tick() - startTime > 0.18 then
+            conn:Disconnect()
+            return
+        end
+        local h = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if h then
             pcall(function()
-                local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    hrp.CFrame = mySavedCFrame
-                    hrp.AssemblyLinearVelocity = Vector3.new(0, -1, 0)
-                end
+                h.CFrame = mySpot
+                h.AssemblyLinearVelocity = Vector3.new(0, -1, 0)
             end)
-            _startInstaReturn(mySavedCFrame, 0.8)
         end
+    end)
+    task.wait(0.18)
+end
+
+-- Queue driver — runs one at a time, fast but not too fast
+local function runSequentialQueue(playersList, actionName)
+    if _queueRunning then
+        warn("[Queue] Already running — try again in a moment")
+        return
+    end
+    if #playersList == 0 then
+        print("[Queue] No targets matched")
+        return
+    end
+    _queueRunning = true
+    task.spawn(function()
+        for i, plr in ipairs(playersList) do
+            if plr and plr.Character and plr ~= player then
+                if actionName == "void" then
+                    performVoidOne(plr)
+                    task.wait(VOID_STEP_DELAY)
+                else
+                    performBringOne(plr)
+                    task.wait(BRING_STEP_DELAY)
+                end
+            end
+        end
+        _queueRunning = false
     end)
 end
 
-local function performAutoBring(targetPlayer, customDestPos, onComplete)
-    task.spawn(function()
-        if not targetPlayer or not targetPlayer.Character then 
-            if onComplete then onComplete() end
-            return 
+-- Collect all matching players (blank = everyone)
+local function collectTargets()
+    local txt = CONFIG.BringTargetName:lower()
+    local out = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= player and not isSafePlayer(p) then
+            if txt == "" or p.Name:lower():find(txt, 1, true) or p.DisplayName:lower():find(txt, 1, true) then
+                table.insert(out, p)
+            end
         end
-        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        if not hrp then 
-            if onComplete then onComplete() end
-            return 
-        end
+    end
+    return out
+end
 
-        local destPos = customDestPos or hrp.Position
-        local mySpot = hrp.CFrame
+local function handleVoidButton()
+    runSequentialQueue(collectTargets(), "void")
+end
 
-        local argX = EVENT_X - destPos.X
-        local argY = EVENT_Y - destPos.Y
-        local argZ = EVENT_Z - destPos.Z
-
-        pcall(function()
-            if CarryRequest then
-                CarryRequest:FireServer(table.unpack({
-                    [1] = targetPlayer, [2] = argX, [3] = argY, [4] = argZ, [5] = 0, [6] = 0, [7] = 0,
-                }))
-            end
-        end)
-        task.wait(0)
-        pcall(function() if EventTeleportEvent then EventTeleportEvent:FireServer() end end)
-        task.wait(0)
-        pcall(function() if StopCarry then StopCarry:FireServer() end end)
-
-        pcall(function()
-            if hrp and hrp.Parent then
-                hrp.CFrame = mySpot
-                hrp.AssemblyLinearVelocity = Vector3.new(0, -1, 0)
-            end
-        end)
-
-        local startTime = tick()
-        local conn
-        conn = RunService.Heartbeat:Connect(function()
-            if tick() - startTime > 0.3 then 
-                conn:Disconnect() 
-                if onComplete then onComplete() end
-                return 
-            end
-            local h = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-            if h then
-                pcall(function()
-                    h.CFrame = mySpot
-                    h.AssemblyLinearVelocity = Vector3.new(0, -1, 0)
-                end)
-            end
-        end)
-    end)
+local function handleBringButton()
+    runSequentialQueue(collectTargets(), "bring")
 end
 
 -- ============================================
@@ -335,14 +381,12 @@ RunService.Heartbeat:Connect(function()
                     
                     if dist <= CONFIG.ShieldSize then
                         isPushing = true
-                        
                         local myLook = hrp.CFrame.LookVector
                         local pushPos = hrp.Position + (myLook * (CONFIG.ShieldSize + CONFIG.ShieldPushDistance))
-                        
-                        performAutoBring(p, pushPos, function()
+                        task.spawn(function()
+                            performBringOne(p, pushPos)
                             isPushing = false
                         end)
-                        
                         break
                     end
                 end
@@ -1186,25 +1230,11 @@ createInput(tabPanels[3], "Void Y", "default 300", "300", function(txt) local v 
 createInput(tabPanels[3], "Void Z", "default 0", "0", function(txt) local v = tonumber(txt); if v then CONFIG.InstaGymDistance = v end end)
 
 createButton(tabPanels[3], "🌀 VOID 🌀", function()
-    local txt = CONFIG.BringTargetName:lower()
-    if txt == "" then return end
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= player and (p.Name:lower():find(txt, 1, true) or p.DisplayName:lower():find(txt, 1, true)) then
-            performVoid(p)
-            break
-        end
-    end
+    handleVoidButton()
 end, Color3.fromRGB(255, 150, 50))
 
 createButton(tabPanels[3], " BRING ", function()
-    local txt = CONFIG.BringTargetName:lower()
-    if txt == "" then return end
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= player and (p.Name:lower():find(txt, 1, true) or p.DisplayName:lower():find(txt, 1, true)) then
-            performAutoBring(p)
-            break
-        end
-    end
+    handleBringButton()
 end, Color3.fromRGB(80, 200, 100))
 
 
